@@ -24,6 +24,9 @@ def hash_to_hex(s: str) -> str:
 def get_jit_include_dir() -> str:
     return f'{os.path.dirname(os.path.abspath(__file__))}/../include'
 
+def get_cutlass_include_dir() -> str:
+    return f'{os.path.dirname(os.path.abspath(__file__))}/../../third-party/cutlass/include/'
+
 
 @functools.lru_cache(maxsize=None)
 def get_deep_gemm_version() -> str:
@@ -102,8 +105,12 @@ def build(name: str, arg_defs: tuple, code: str) -> Runtime:
                   # Suppress some unnecessary warnings, such as unused variables for certain `constexpr` branch cases
                   '--diag-suppress=177,174,940']
     cxx_flags = ['-fPIC', '-O3', '-Wno-deprecated-declarations', '-Wno-abi']
+    # JQ:
+    if os.getenv('DEBUG', None):
+        cxx_flags.append('-DDEBUG')
     flags = [*nvcc_flags, f'--compiler-options={",".join(cxx_flags)}']
-    include_dirs = [get_jit_include_dir()]
+    include_dirs = [get_jit_include_dir(), get_cutlass_include_dir()]
+
 
     # Build signature
     enable_sass_opt = get_nvcc_compiler()[1] <= '12.8' and int(os.getenv('DG_DISABLE_FFMA_INTERLEAVE', 0)) == 0
