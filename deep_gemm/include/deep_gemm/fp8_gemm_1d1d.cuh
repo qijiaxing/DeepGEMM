@@ -14,6 +14,8 @@
 #include "tma_utils.cuh"
 #include "utils.cuh"
 
+/* #define DEBUG 1 */
+
 namespace deep_gemm {
 
 enum class Layout {
@@ -241,10 +243,9 @@ fp8_gemm_kernel(__nv_bfloat16* gmem_d,
 
 #ifdef DEBUG
                         // For normal GEMM< get_global_idx(shape_dim, block_size, block_idx) = block_idx * block_size;
-                        printf("TMA copy issued, blockIdx.x: %2d, stage: %d, (scale A), m idx: %4d, k idx: %5d, (scale B), n idx: %5d, k idx: %5d\n",
+                        printf("TMA copy, blockIdx.x: %2d, k_iter: %d, s: %d, n idx: %5d, k idx: %5d\n",
                                 blockIdx.x,
-                                s,
-                                m_block_idx * BLOCK_M, scheduler.get_global_idx(SHAPE_K_SCALES, 1, k_idx / BLOCK_K),
+                                k_iter, s,
                                 n_block_idx * BLOCK_N, scheduler.get_global_idx(SHAPE_K_SCALES, 1, k_idx / BLOCK_K)
                         );
 #endif
@@ -267,7 +268,7 @@ fp8_gemm_kernel(__nv_bfloat16* gmem_d,
                     empty_barriers[s]->wait((scheduler.current_iter * kNumIterations + 1) & 1);
             }
         }
-    } else {
+    } else { // threadIdx.x < kNumMathThreads
         // Math warp-groups for WGMMA
         cutlass::arch::warpgroup_reg_alloc<kNumMathRegisters>();
 
@@ -305,6 +306,32 @@ fp8_gemm_kernel(__nv_bfloat16* gmem_d,
                     // Read A scales
                     // NOTES: all shared memory read must be prior to `warpgroup_arrive` to avoid next scheduled block polluting the results
                     auto scale_a_0 = ld_shared(smem_scales_a[s] + r_0), scale_a_1 = ld_shared(smem_scales_a[s] + r_1);
+                    // Scale B
+                    // Each thread needs BLOCK_N/8*2 columns, 
+                    float scale_b_0[WGMMA::kNumAccum/4], scale_b_1[WGMMA::kNumAccum/4];
+                    #pragma unroll
+                    for (int i = 0; i < WGMMA::kNumAccum / 4; ++ i){
+                        // iter 2 cols each time
+                        auto c_0 = lane_idx % 4 * 2 + i * 8, c_1 = c_0 + 1;
+                        scale_b_0[i] = ld_shared(smem_scales_b[s] + c_0);
+                        scale_b_1[i] = ld_shared(smem_scales_b[s] + c_1);
+                    }
+
+#ifdef DEBUG
+                    if (threadIdx.x == 0) {
+                        // smem scale b
+                        int k_block_idx = k_iter * kNumStages + s;
+                        for (int ii = 0; ii < BLOCK_N; ii++) {
+                            auto scale_b = ld_shared(smem_scales_b[s] + ii);
+                            printf("scale b, bid: %3d, m_block_idx: %2d, n_block_idx: %2d, local_n: %3d, k iter: %2d, s: %d, scale: %8.f\n",
+                                blockIdx.x,
+                                m_block_idx,
+                                n_block_idx, ii, k_iter, s, scale_b);
+                        }
+                    /*     printf("m idx: %d, k iter: %d, s: %d,  r0: %d, scale: %.3e\n", */
+                    /*         m_block_idx*BLOCK_M, k_iter, s, r_0, scale_a_0); */
+                    }
+#endif
 
                     // Commit WGMMA instructions
                     #pragma unroll
@@ -329,19 +356,34 @@ fp8_gemm_kernel(__nv_bfloat16* gmem_d,
                     // Promote with scales
                     // NOTES: making it as predicates is very important for performance, comparing to two loops
                     #pragma unroll
-                    for (int i = 0; i < WGMMA::kNumAccum / 4; ++ i) {
+                    for (int i = 0; i < WGMMA::kNumAccum / 4; ++ i) {   // BLOCK_N / 8
                         // iter 2 cols each time
                         // Read B scales
-                        auto c_0 = lane_idx % 4 * 2 + i * 8, c_1 = c_0 + 1;
-                        auto scale_b_0 = ld_shared(smem_scales_b[s] + c_0), scale_b_1 = ld_shared(smem_scales_b[s] + c_1);
+                        // smem_scales_b shape: [BLOCK_N, 1]
+                        /* auto c_0 = lane_idx % 4 * 2 + i * 8, c_1 = c_0 + 1; */
+                        /* auto scale_b_0 = ld_shared(smem_scales_b[s] + c_0); */
+                        /* auto scale_b_1 = ld_shared(smem_scales_b[s] + c_1); */
 
-                        float scale_0_0 = scale_a_0 * scale_b_0, scale_1_0 = scale_a_1 * scale_b_0;
-                        float scale_0_1 = scale_a_0 * scale_b_1, scale_1_1 = scale_a_1 * scale_b_1;
+                        float scale_0_0 = scale_a_0 * scale_b_0[i], scale_1_0 = scale_a_1 * scale_b_0[i];
+                        float scale_0_1 = scale_a_0 * scale_b_1[i], scale_1_1 = scale_a_1 * scale_b_1[i];
 
                         final_accum[i * 4 + 0] += scale_0_0 * accum[i * 4 + 0];
                         final_accum[i * 4 + 1] += scale_0_1 * accum[i * 4 + 1];
                         final_accum[i * 4 + 2] += scale_1_0 * accum[i * 4 + 2];
                         final_accum[i * 4 + 3] += scale_1_1 * accum[i * 4 + 3];
+
+#ifdef DEBUG
+                        // DEBUG scale b
+                        if (threadIdx.x < kNumMathThreads) {
+                            int global_n_idx = n_block_idx*BLOCK_N+c_0;
+                            // if (static_cast<int>(scale_b_0) != (global_n_idx*100+k_iter*kNumStages+s)) {
+                            if (true) {
+                                printf("k_iter: %d, s: %d, k_block_idx: %2d, iAccum: %3d, tid: %3d, global_n: %4d, local_n: %3d, scale: %8.f\n",
+                                    k_iter, s, k_iter*kNumStages+s, 
+                                    i, threadIdx.x, global_n_idx, c_0, scale_b_0);
+                            }
+                        }
+#endif
                     }
                 }
 
@@ -426,7 +468,9 @@ public:
         config.blockDim = get_num_threads_per_sm<kNumTMAThreads, kNumMathThreadsPerGroup>(BLOCK_M);
         config.dynamicSmemBytes = smem_size;
         config.stream = stream;
-        printf("Grid dim: %d, block dim: %d\n", num_sms, config.blockDim.x);
+        printf("Config: N: %d, BLOCK_N: %d, K: %d, Stages: %d, K_per_iter: %d, block dim: %d\n",
+                SHAPE_N, BLOCK_N, SHAPE_K, kNumStages, kNumStages*BLOCK_K, config.blockDim.x);
+        /* printf("Grid dim: %d, block dim: %d\n", num_sms, config.blockDim.x); */
 
         // Clusters for TMA multicast
         // NOTES: `>= 4` cluster size will cause performance degradation
@@ -493,7 +537,9 @@ public:
         DG_STATIC_ASSERT(SHAPE_N%kAlignment == 0, "TMA scale B Shape N alignment failed!");
 
         return make_2d_tma_desc(global_address, Layout::ColMajor,
+                                /* gmem_rows, gmem_cols, */
                                 SHAPE_N, ceil_div(SHAPE_K, BLOCK_K) * (kGemmType == GemmType::GroupedMasked ? kNumGroups : 1),
+                                /* smem_rows, smem_cols, */
                                 BLOCK_N, 1,
                                 CUtensorMapSwizzle::CU_TENSOR_MAP_SWIZZLE_NONE);
     }
