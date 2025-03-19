@@ -73,9 +73,7 @@ def get_best_configs(m: int, n: int, k: int, num_groups: int, num_sms: int,
         block_ms = (64 if m <= 64 else 128, )
     else:
         block_ms = (get_m_alignment_for_contiguous_layout(), )
-    # block_ns = tuple(range(16, 129, 8))
-    # JQ: CUDA memory error if block_n is not multiple of 32. Need to find reason.
-    block_ns = tuple(range(32, 129, 32))
+    block_ns = tuple(range(16, 129, 8))
 
     fix_wave_saturate = lambda x: num_sms if x == 0 else x
     get_num_waves = lambda bm, bn: (ceil_div(ceil_div(m, bm) * ceil_div(n, bn) * num_groups, num_sms) if bm else None)
@@ -125,8 +123,8 @@ def get_best_configs(m: int, n: int, k: int, num_groups: int, num_sms: int,
 
 
 def gemm_fp8_fp8_bf16_nt_1d1d(lhs: Tuple[torch.Tensor, torch.Tensor],
-                         rhs: Tuple[torch.Tensor, torch.Tensor],
-                         out: torch.Tensor) -> None:
+                              rhs: Tuple[torch.Tensor, torch.Tensor],
+                              out: torch.Tensor) -> None:
     """
     Do a normal GEMM with FP8 inputs and BF16 output, with 1x128 LHS scaling and 1x128 RHS scaling.
     LHS, RHS, RHS scaling factors, and output tensors must be in contiguous format.
@@ -160,7 +158,6 @@ def gemm_fp8_fp8_bf16_nt_1d1d(lhs: Tuple[torch.Tensor, torch.Tensor],
     assert lhs.is_contiguous() and rhs.is_contiguous() and out.is_contiguous()
 
     # both LHS scales and RHS scales must be transposed for TMA load
-    # NOTES: `get_tma_aligned_lhs_scales` may launch a kernel if not processed by previous kernels
     lhs_scales = get_col_major_tma_aligned_tensor(lhs_scales)
     rhs_scales = get_col_major_tma_aligned_tensor(rhs_scales)
 
@@ -186,6 +183,8 @@ def gemm_fp8_fp8_bf16_nt_1d1d(lhs: Tuple[torch.Tensor, torch.Tensor],
         template=template,
         args=args
     )
+
+    print(f"Kernel config: sm: {num_sms}, block_m: {block_m}, block_n: {block_n}, stages: {num_stages}, multicast: {num_tma_multicast}")
 
     # Run the kernel
     runtime(*args)

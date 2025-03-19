@@ -113,11 +113,6 @@ fp8_gemm_kernel(__nv_bfloat16* gmem_d,
        + kNumStages * (SMEM_A_SIZE_PER_STAGE 
                        + SMEM_B_SIZE_PER_STAGE 
                        + SMEM_SCALES_A_SIZE_PER_STAGE));  // remove */
-#ifdef DEBUG
-    /* if ((lane_idx == 0) && (blockIdx.x == 0)) { */
-    /*     printf("warp id: %d, Fill shared mem done!\n", warp_idx); */
-    /* } */
-#endif
 
     /* static constexpr uint32_t SMEM_SCALES_B_SIZE = */ 
     /*     ceil_div<uint32_t>(SHAPE_K_SCALES * (kMustUseUniformedScaleB ? 1 : 2) * sizeof(float), sizeof(Barrier)) * sizeof(Barrier); */
@@ -132,21 +127,9 @@ fp8_gemm_kernel(__nv_bfloat16* gmem_d,
     }
     (kNumTMAMulticast > 1) ? cute::cluster_sync() : __syncthreads();
 
-#ifdef DEBUG
-    /* if ((lane_idx == 0) && (blockIdx.x == 0)) { */
-    /*     printf("warp id: %d, Fill barriers done!\n", warp_idx); */
-    /* } */
-#endif
-
     // Initialize barriers
     DG_STATIC_ASSERT(kNumTMAMulticast <= 32, "Too many TMA multicast");
     if (threadIdx.x == kNumMathThreads) {
-
-#ifdef DEBUG
-        /* if ((lane_idx == 0) && (blockIdx.x == 0)) { */
-        /*     printf("warp id: %d, before init barriers!\n", warp_idx); */
-        /* } */
-#endif
 
         // NOTES: we always use `lane_idx` to arrive for the `lane_idx`-th CTA in the cluster,
         // even with TMA multicast disabled, we want to make the behavior aligned
@@ -156,22 +139,10 @@ fp8_gemm_kernel(__nv_bfloat16* gmem_d,
             empty_barriers[i]->init(kNumTMAMulticast * kNumMathThreads / 32);
         }
 
-#ifdef DEBUG
-        /* if ((lane_idx == 0) && (blockIdx.x == 0)) { */
-        /*     printf("warp id: %d, math threads init barriers done!\n", warp_idx); */
-        /* } */
-#endif
-
         // Make initialized barrier visible in async proxy
         cutlass::arch::fence_view_async_shared();
         (kNumTMAMulticast > 1) ? cutlass::arch::fence_barrier_init() : void();
     }
-
-#ifdef DEBUG
-    /* if ((lane_idx == 0) && (blockIdx.x == 0)) { */
-    /*     printf("warp id: %d, init barriers done!\n", warp_idx); */
-    /* } */
-#endif
 
     // Synchronize all threads to make barrier visible in normal memory model
     (kNumTMAMulticast > 1) ? cute::cluster_sync() : __syncthreads();
