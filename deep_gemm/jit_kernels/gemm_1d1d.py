@@ -46,7 +46,12 @@ def get_smem_size(num_stages: int, k: int, block_m: int, block_n: int, block_k: 
     smem_a_per_stage = block_m * block_k
     smem_scales_a_per_stage = block_m * 4
     smem_b_per_stage = block_n * block_k
-    smem_scales_b_per_stage = block_n * 4     # for 1d1d
+
+    # JQ: ensure each stage scale b smem is 128 byte aligned, required by TMA.
+    #     see CUDA C++ programming guide section 10.29.2, table 8
+    smem_scales_b_per_stage = int(int(block_n * 4 + 127) // 128 ) * 128     # for 1d1d
+    # print(f"Allocate smem scales b bytes per stage: {smem_scales_b_per_stage}")
+
     smem_scales_b = ceil_div(k, block_k) * 4  # for 1d2d
     smem_barrier = num_stages * 8 * 2  # sizeof(Barrier) = 8, full+empty = 2
 
@@ -73,9 +78,7 @@ def get_best_configs(m: int, n: int, k: int, num_groups: int, num_sms: int,
         block_ms = (64 if m <= 64 else 128, )
     else:
         block_ms = (get_m_alignment_for_contiguous_layout(), )
-    # block_ns = tuple(range(16, 129, 8))
-    # TODO: some block_n may cause TMA (alignment?) error, use 64 or 128 for now.
-    block_ns = (64, 128)
+    block_ns = tuple(range(16, 129, 8))
 
     fix_wave_saturate = lambda x: num_sms if x == 0 else x
     get_num_waves = lambda bm, bn: (ceil_div(ceil_div(m, bm) * ceil_div(n, bn) * num_groups, num_sms) if bm else None)

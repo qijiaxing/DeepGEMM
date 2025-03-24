@@ -60,6 +60,8 @@ fp8_gemm_kernel(__nv_bfloat16* gmem_d,
     static constexpr uint32_t SMEM_B_SIZE_PER_STAGE = BLOCK_N * BLOCK_K * sizeof(__nv_fp8_e4m3);
     static constexpr uint32_t SMEM_SCALES_A_SIZE_PER_STAGE = BLOCK_M * sizeof(float);
     static constexpr uint32_t SMEM_SCALES_B_SIZE_PER_STAGE = BLOCK_N * sizeof(float);   // scale b
+    // JQ: smem scale b per stage allocation may be a little more than actual usage, to be 128B aligned
+    static constexpr uint32_t SMEM_SCALES_B_SIZE_PER_STAGE_ALLOC = ((BLOCK_N * sizeof(float) + 127) / 128) * 128;
     static constexpr uint32_t SHAPE_K_SCALES = ceil_div(SHAPE_K, BLOCK_K);        // num of block k
 
     // Configs
@@ -105,21 +107,13 @@ fp8_gemm_kernel(__nv_bfloat16* gmem_d,
         smem_scales_a[i] = reinterpret_cast<float*>(smem_buffer + SMEM_D_SIZE + kNumStages * (SMEM_A_SIZE_PER_STAGE + SMEM_B_SIZE_PER_STAGE) + i * SMEM_SCALES_A_SIZE_PER_STAGE);
         smem_scales_b[i] = reinterpret_cast<float*>(smem_buffer + SMEM_D_SIZE
                  + kNumStages * (SMEM_A_SIZE_PER_STAGE + SMEM_B_SIZE_PER_STAGE + SMEM_SCALES_A_SIZE_PER_STAGE)
-                 + i * SMEM_SCALES_B_SIZE_PER_STAGE);   // scale B
+                 + i * SMEM_SCALES_B_SIZE_PER_STAGE_ALLOC);   // scale B
     }
-    /* smem_scales_b = reinterpret_cast<float*>(
-       smem_buffer 
-       + SMEM_D_SIZE 
-       + kNumStages * (SMEM_A_SIZE_PER_STAGE 
-                       + SMEM_B_SIZE_PER_STAGE 
-                       + SMEM_SCALES_A_SIZE_PER_STAGE));  // remove */
 
-    /* static constexpr uint32_t SMEM_SCALES_B_SIZE = */ 
-    /*     ceil_div<uint32_t>(SHAPE_K_SCALES * (kMustUseUniformedScaleB ? 1 : 2) * sizeof(float), sizeof(Barrier)) * sizeof(Barrier); */
     // Fill barriers
     auto barrier_start_ptr = reinterpret_cast<Barrier*>(
             reinterpret_cast<uint8_t*>(smem_scales_b[0]) 
-            + ceil_div<uint32_t>(SMEM_SCALES_B_SIZE_PER_STAGE * kNumStages, sizeof(Barrier)) * sizeof(Barrier));  // TODO: total smem size?
+            + ceil_div<uint32_t>(SMEM_SCALES_B_SIZE_PER_STAGE_ALLOC * kNumStages, sizeof(Barrier)) * sizeof(Barrier));
     #pragma unroll
     for (int i = 0; i < kNumStages; ++ i) {
         full_barriers[i] = barrier_start_ptr + i;
@@ -355,7 +349,7 @@ fp8_gemm_kernel(__nv_bfloat16* gmem_d,
                             }
                         }
 #endif
-                    }
+                    } // for (i < WGMMA:kNumAccum / 4)
                 }
 
                 // Wait unaligned cases
