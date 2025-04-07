@@ -281,6 +281,9 @@ fp8_gemm_kernel(__nv_bfloat16* gmem_d,
                         scale_b_0[i] = ld_shared(smem_scales_b[s] + c_0);
                         scale_b_1[i] = ld_shared(smem_scales_b[s] + c_1);
                     }
+                    // possible choice: use float2 to load
+                    // float2 scales_b_reg[BLOCK_N / 8];
+                    // scales_b_reg[i] = ld_shared(reinterpret_cast<float2 *>(smem_scales_b[s] + c_0));
 
 #ifdef DEBUG
                     if (threadIdx.x == 0) {
@@ -500,6 +503,7 @@ public:
         constexpr uint32_t kAlignment = 16 / sizeof(T);
         /* shape_m = ceil_div(shape_m, kAlignment) * kAlignment; */
         DG_STATIC_ASSERT(SHAPE_N%kAlignment == 0, "TMA scale B Shape N alignment failed!");
+        // const uint32_t shape_n = ceil_div(SHAPE_N, kAlignment) * kAlignment;
 
         return make_2d_tma_desc(global_address, Layout::ColMajor,
                                 /* gmem_rows, gmem_cols, */
