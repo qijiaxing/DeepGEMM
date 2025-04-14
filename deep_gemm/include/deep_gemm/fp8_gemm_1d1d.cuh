@@ -436,8 +436,8 @@ public:
         config.blockDim = get_num_threads_per_sm<kNumTMAThreads, kNumMathThreadsPerGroup>(BLOCK_M);
         config.dynamicSmemBytes = smem_size;
         config.stream = stream;
-        printf("Config: N: %d, BLOCK_N: %d, K: %d, Stages: %d, K_per_iter: %d, block dim: %d\n",
-                SHAPE_N, BLOCK_N, SHAPE_K, kNumStages, kNumStages*BLOCK_K, config.blockDim.x);
+        /* printf("Config: N: %d, BLOCK_N: %d, K: %d, Stages: %d, K_per_iter: %d, block dim: %d\n", */
+        /*         SHAPE_N, BLOCK_N, SHAPE_K, kNumStages, kNumStages*BLOCK_K, config.blockDim.x); */
         /* printf("Grid dim: %d, block dim: %d\n", num_sms, config.blockDim.x); */
 
         // Clusters for TMA multicast

@@ -189,7 +189,7 @@ def gemm_fp8_fp8_bf16_nt_1d1d(lhs: Tuple[torch.Tensor, torch.Tensor],
         args=args
     )
 
-    print(f"Kernel config: sm: {num_sms}, block_m: {block_m}, block_n: {block_n}, stages: {num_stages}, multicast: {num_tma_multicast}")
+    # print(f"Kernel config: sm: {num_sms}, block_m: {block_m}, block_n: {block_n}, stages: {num_stages}, multicast: {num_tma_multicast}")
 
     # Run the kernel
     runtime(*args)
